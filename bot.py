@@ -55,7 +55,7 @@ def list_reminders(message):
         reminders_list = cursor.fetchall()
         con.close()
     if len(reminders_list) == 0:
-        bot.send_message(message.chat.id, 'Список напоминаний пуст!')
+        bot.send_message(message.chat.id, 'Список напоминаний пуст!!')
     else:
         i = 1
         message_text = ''
