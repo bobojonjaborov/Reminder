@@ -13,7 +13,8 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
             text TEXT NOT NULL,
-            time TEXT NOT NULL
+            datetime TEXT NOT NULL,
+            sent INTEGER NOT NULL DEFAULT 0
         )
         """)
         conn.commit()
