@@ -1,50 +1,44 @@
-from crud import get_user_reminders, delete_user_reminders, delete_reminder_by_id
+from crud import (get_user_reminders, delete_user_reminders, delete_reminder_by_id, get_user_timezone, save_user_timezone,
+                  delete_user_timezone, create_reminder)
 from states import UserState
-from crud import create_reminder
-from datetime import datetime, timedelta, timezone
+from utils import is_valid_timezone, build_reminder_datetime
+from datetime import datetime, timezone, timedelta
+from zoneinfo import ZoneInfo
 
 
 user_states = {}
 temp_data = {}
 
-def build_reminder_datetime(time_text: str) -> str:
-    # 1. Таймзона пользователя (UTC+5)
-    user_tz = timezone(timedelta(hours=5))
 
-    # 2. Парсим HH:MM
-    parsed_time = datetime.strptime(time_text, "%H:%M")
-
-    # 3. Текущее локальное время пользователя
-    now_local = datetime.now(user_tz)
-
-    # 4. Создаём datetime на сегодня в его таймзоне
-    reminder_local = now_local.replace(
-        hour=parsed_time.hour,
-        minute=parsed_time.minute,
-        second=0,
-        microsecond=0
-    )
-
-    # 5. Если время уже прошло — переносим на завтра
-    if reminder_local <= now_local:
-        reminder_local += timedelta(days=1)
-
-    # 6. Переводим в UTC
-    reminder_utc = reminder_local.astimezone(timezone.utc)
-
-    # 7. Возвращаем строку без tz info
-    return reminder_utc.strftime("%Y-%m-%d %H:%M:%S")
 def register_handlers(bot):
     @bot.message_handler(commands=['start'])
     def main(message):
-        bot.send_message(
-            message.chat.id,
-            '/add_reminder - <b>Добавить напоминание</b>\n'
-            '/list - <b>Список напоминаний</b>\n'
-            '/delete_all - <b>Удалить все напоминания</b>\n'
-            '/delete &lt;номер&gt; - <b>Удалить напоминание по номеру</b>',
-            parse_mode='HTML'
-        )
+        user_id = message.from_user.id
+        tz = get_user_timezone(user_id)
+        if tz is None:
+            user_states[user_id] = UserState.WAITING_TIMEZONE
+            bot.send_message(message.chat.id, 'Введите ваш часовой пояс и перезепустите бот. \nПример: Asia/Dushanbe')
+
+        else:
+            bot.send_message(
+                message.chat.id,
+                '/set_timezone - <b>Добавить часовой пояс</b>\n'
+                '/add_reminder - <b>Добавить напоминание</b>\n'
+                '/list - <b>Список напоминаний</b>\n'
+                '/delete_all - <b>Удалить все напоминания</b>\n'
+                '/delete &lt;номер&gt; - <b>Удалить напоминание по номеру</b>',
+                parse_mode='HTML'
+
+            )
+
+
+    @bot.message_handler(commands=['set_timezone'])
+    def set_timezone(message):
+        user_id = message.from_user.id
+
+        user_states[user_id] = UserState.WAITING_TIMEZONE
+        bot.send_message(message.chat.id, 'Введите ваш часовой пояс: \n(Asia/Dushanbe)')
+
 
     @bot.message_handler(commands=['list'])
     def list_reminders(message):
@@ -56,16 +50,43 @@ def register_handlers(bot):
             return
 
         text = ""
+
         for i, reminder in enumerate(reminders, start=1):
-            text += f"{i}. {reminder[1]} в {reminder[2]}\n"
+            reminder_id, reminder_text, reminder_datetime, user_timezone = reminder
+
+            reminder_utc = datetime.strptime(reminder_datetime, "%Y-%m-%d %H:%M:%S")
+            reminder_utc = reminder_utc.replace(tzinfo=timezone.utc)
+
+            user_tz = ZoneInfo(user_timezone)
+            local_time = reminder_utc.astimezone(user_tz)
+
+            today = datetime.now(user_tz).date()
+
+            if local_time.date() == today:
+                date_text = "сегодня"
+            elif local_time.date() == today + timedelta(days=1):
+                date_text = "завтра"
+            else:
+                date_text = local_time.strftime("%d.%m")
+
+            text += f"{i}. {reminder_text} — {date_text} в {local_time.strftime('%H:%M')}\n"
 
         bot.send_message(message.chat.id, text)
+
 
     @bot.message_handler(commands=['delete_all'])
     def delete_all(message):
         user_id = message.from_user.id
         delete_user_reminders(user_id)
         bot.send_message(message.chat.id, "Ваши напоминания удалены!")
+
+
+    @bot.message_handler(commands=['delete_tz'])
+    def delete_tz(message):
+        user_id = message.from_user.id
+        delete_user_timezone(user_id)
+        bot.send_message(message.chat.id, "Ваш часовой пояс удалён.")
+
 
     @bot.message_handler(commands=['add_reminder'])
     def add_reminder(message):
@@ -103,6 +124,7 @@ def register_handlers(bot):
     @bot.message_handler(func=lambda message: True)
     def handle_message(message):
         user_id = message.from_user.id
+        user_timezone = get_user_timezone(user_id)
 
         if user_id not in user_states:
             return
@@ -119,7 +141,8 @@ def register_handlers(bot):
             time_text = message.text
 
             try:
-                formatted_time = build_reminder_datetime(time_text)
+
+                formatted_time = build_reminder_datetime(time_text, user_timezone)
                 create_reminder(user_id, temp_data[user_id], formatted_time)
                 bot.send_message(message.chat.id, "Напоминание сохранено!")
 
@@ -128,3 +151,15 @@ def register_handlers(bot):
 
             except ValueError:
                 bot.send_message(message.chat.id, "Неверный формат времени. Попробуй ещё раз.")
+
+        elif state == UserState.WAITING_TIMEZONE:
+            tz_text = message.text.strip()
+            is_valid = is_valid_timezone(tz_text)
+
+            if is_valid:
+                save_user_timezone(user_id, tz_text)
+                del user_states[user_id]
+                bot.send_message(message.chat.id, 'Часовой пояс успешно сохранён.')
+            else:
+                bot.send_message(message.chat.id, 'Неверный часовой пояс. Попробуй ещё раз.')
+
