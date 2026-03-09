@@ -12,4 +12,4 @@ register_handlers(bot)
 
 start_checker(bot)
 
-bot.infinity_polling()
+bot.infinity_polling(skip_pending=True)

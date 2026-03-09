@@ -17,7 +17,8 @@ def get_user_reminders(user_id: int):
             SELECT r.id, r.text, r.datetime, u.timezone
             FROM reminders r
             JOIN users u ON r.user_id = u.user_id
-            WHERE r.user_id = ?
+            WHERE r.user_id = ? 
+            AND sent = 0
             ORDER BY r.datetime
             """, (user_id,))
         return cursor.fetchall()
